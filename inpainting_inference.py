@@ -1,5 +1,6 @@
 import os
-
+import sys
+sys.path.append('/app/dependency')
 import numpy as np
 from fire import Fire
 from decord import VideoReader, cpu
