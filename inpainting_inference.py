@@ -153,6 +153,7 @@ def main(
         unet_path,
         subfolder="unet_diffusers",
         low_cpu_mem_usage=True,
+        # variant="fp16",
         torch_dtype=torch.float16
     )
     print("Loaded UNet")
