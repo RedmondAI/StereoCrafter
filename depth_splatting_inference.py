@@ -16,6 +16,7 @@ from dependency.DepthCrafter.depthcrafter.unet import DiffusersUNetSpatioTempora
 from dependency.DepthCrafter.depthcrafter.utils import vis_sequence_depth, read_video_frames
 
 sys.path.append('/app/dependency/Forward-Warp')
+sys.path.append('/app/dependency/Forward-Warp/Forward_Warp/cuda/build/lib.linux-x86_64-cpython-38')
 print(f"Python path: {sys.path}")
 
 try:
