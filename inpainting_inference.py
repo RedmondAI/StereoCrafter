@@ -28,14 +28,33 @@ try:
     cuda_available = torch.cuda.is_available()
     log_time(f"CUDA available: {cuda_available}")
     if cuda_available:
-        log_time(f"CUDA version: {torch.version.cuda}")
-        log_time(f"GPU device count: {torch.cuda.device_count()}")
-        for i in range(torch.cuda.device_count()):
-            log_time(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+        try:
+            log_time(f"CUDA version: {torch.version.cuda}")
+            device_count = torch.cuda.device_count()
+            log_time(f"GPU device count: {device_count}")
+            
+            # Try to get device name with timeout
+            for i in range(device_count):
+                try:
+                    device_name = torch.cuda.get_device_name(i)
+                    log_time(f"GPU {i}: {device_name}")
+                except Exception as e:
+                    log_time(f"Warning: Could not get name for GPU {i}: {str(e)}")
+        except Exception as e:
+            log_time(f"Warning: Error getting CUDA details: {str(e)}")
     
     log_time("Importing full torch...")
     import torch
     log_time(f"Torch imported successfully. Version: {torch.__version__}")
+
+    # Try to initialize CUDA
+    if cuda_available:
+        try:
+            log_time("Initializing CUDA...")
+            torch.cuda.init()
+            log_time("CUDA initialized successfully")
+        except Exception as e:
+            log_time(f"Warning: CUDA initialization error: {str(e)}")
 
     log_time("Importing torchvision...")
     from torchvision.io import write_video
