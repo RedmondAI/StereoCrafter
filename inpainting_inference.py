@@ -1,4 +1,6 @@
 import os
+import time
+from datetime import datetime
 
 import numpy as np
 from fire import Fire
@@ -121,6 +123,10 @@ def spatial_tiled_process(
     return x
 
 
+def log_time(message):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+
+
 def main(
     pre_trained_path,
     unet_path,
@@ -130,38 +136,42 @@ def main(
     overlap=3,
     tile_num=1
 ):
-    print(f"Starting inference with input video: {input_video_path}")
-    print(f"Loading models from {pre_trained_path} and {unet_path}")
+    log_time("Starting script")
+    log_time(f"Loading models from {pre_trained_path} and {unet_path}")
     
+    log_time("Loading CLIP image encoder...")
     image_encoder = CLIPVisionModelWithProjection.from_pretrained(
         pre_trained_path,
         subfolder="image_encoder",
         variant="fp16",
         torch_dtype=torch.float16
     )
-    print("Loaded image encoder")
+    log_time("CLIP image encoder loaded")
 
+    log_time("Loading VAE...")
     vae = AutoencoderKLTemporalDecoder.from_pretrained(
         pre_trained_path, 
         subfolder="vae", 
         variant="fp16", 
         torch_dtype=torch.float16
     )
-    print("Loaded VAE")
+    log_time("VAE loaded")
 
+    log_time("Loading UNet...")
     unet = UNetSpatioTemporalConditionModel.from_pretrained(
         unet_path,
         subfolder="unet_diffusers",
         low_cpu_mem_usage=True,
-        # variant="fp16",
         torch_dtype=torch.float16
     )
-    print("Loaded UNet")
+    log_time("UNet loaded")
 
+    log_time("Setting up models...")
     image_encoder.requires_grad_(False)
     vae.requires_grad_(False)
     unet.requires_grad_(False)
 
+    log_time("Creating pipeline...")
     pipeline = StableVideoDiffusionInpaintingPipeline.from_pretrained(
         pre_trained_path,
         image_encoder=image_encoder,
@@ -170,13 +180,15 @@ def main(
         torch_dtype=torch.float16,
     )
     pipeline = pipeline.to("cuda")
+    log_time("Pipeline created and moved to GPU")
 
     os.makedirs(save_dir, exist_ok=True)
     video_name = input_video_path.split("/")[-1].replace(".mp4", "").replace("_splatting_results", "") + "_inpainting_results"
 
+    log_time("Loading video...")
     video_reader = VideoReader(input_video_path, ctx=cpu(0))
     fps = video_reader.get_avg_fps()
-    print(f"Loaded video with {len(video_reader)} frames at {fps} FPS")
+    log_time(f"Video loaded: {len(video_reader)} frames at {fps} FPS")
     frame_indices = list(range(len(video_reader)))
     frames = video_reader.get_batch(frame_indices)
     num_frames = len(video_reader)
