@@ -130,6 +130,8 @@ def main(
     overlap=3,
     tile_num=1
 ):
+    print(f"Starting inference with input video: {input_video_path}")
+    print(f"Loading models from {pre_trained_path} and {unet_path}")
     
     image_encoder = CLIPVisionModelWithProjection.from_pretrained(
         pre_trained_path,
@@ -137,6 +139,7 @@ def main(
         variant="fp16",
         torch_dtype=torch.float16
     )
+    print("Loaded image encoder")
 
     vae = AutoencoderKLTemporalDecoder.from_pretrained(
         pre_trained_path, 
@@ -144,14 +147,15 @@ def main(
         variant="fp16", 
         torch_dtype=torch.float16
     )
+    print("Loaded VAE")
 
     unet = UNetSpatioTemporalConditionModel.from_pretrained(
         unet_path,
         subfolder="unet_diffusers",
         low_cpu_mem_usage=True,
-        # variant="fp16",
         torch_dtype=torch.float16
     )
+    print("Loaded UNet")
 
     image_encoder.requires_grad_(False)
     vae.requires_grad_(False)
@@ -171,6 +175,7 @@ def main(
 
     video_reader = VideoReader(input_video_path, ctx=cpu(0))
     fps = video_reader.get_avg_fps()
+    print(f"Loaded video with {len(video_reader)} frames at {fps} FPS")
     frame_indices = list(range(len(video_reader)))
     frames = video_reader.get_batch(frame_indices)
     num_frames = len(video_reader)
