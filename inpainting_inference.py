@@ -1,22 +1,53 @@
 import os
+import sys
 import time
 from datetime import datetime
 
-import numpy as np
-from fire import Fire
-from decord import VideoReader, cpu
+def log_time(message):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}", flush=True)
 
-import torch
-from torchvision.io import write_video
+log_time("Starting imports...")
 
-from transformers import CLIPVisionModelWithProjection
-from diffusers import (
-    AutoencoderKLTemporalDecoder,
-)
-from diffusers import UNetSpatioTemporalConditionModel
+try:
+    log_time("Importing numpy...")
+    import numpy as np
+    log_time("Numpy imported successfully")
 
-from pipelines.stereo_video_inpainting import StableVideoDiffusionInpaintingPipeline, tensor2vid
+    log_time("Importing Fire...")
+    from fire import Fire
+    log_time("Fire imported successfully")
 
+    log_time("Importing decord...")
+    from decord import VideoReader, cpu
+    log_time("Decord imported successfully")
+
+    log_time("Importing torch...")
+    import torch
+    log_time(f"Torch imported successfully. CUDA available: {torch.cuda.is_available()}")
+
+    log_time("Importing torchvision...")
+    from torchvision.io import write_video
+    log_time("Torchvision imported successfully")
+
+    log_time("Importing transformers...")
+    from transformers import CLIPVisionModelWithProjection
+    log_time("Transformers imported successfully")
+
+    log_time("Importing diffusers...")
+    from diffusers import AutoencoderKLTemporalDecoder, UNetSpatioTemporalConditionModel
+    log_time("Diffusers imported successfully")
+
+    log_time("Importing custom pipeline...")
+    from pipelines.stereo_video_inpainting import StableVideoDiffusionInpaintingPipeline, tensor2vid
+    log_time("Custom pipeline imported successfully")
+
+except Exception as e:
+    log_time(f"Error during imports: {str(e)}")
+    log_time(f"Error type: {type(e)}")
+    log_time(f"Error location: {sys.exc_info()[-1].tb_lineno}")
+    raise
+
+log_time("All imports successful")
 
 def blend_h(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor:
     weight_b = (torch.arange(overlap_size).view(1, 1, 1, -1) / overlap_size).to(
@@ -121,10 +152,6 @@ def spatial_tiled_process(
         pixels.append(torch.cat(rows, dim=3))
     x = torch.cat(pixels, dim=2)
     return x
-
-
-def log_time(message):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
 
 def main(
