@@ -1,5 +1,6 @@
 import gc
 import os
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,6 +15,19 @@ from dependency.DepthCrafter.depthcrafter.depth_crafter_ppl import DepthCrafterP
 from dependency.DepthCrafter.depthcrafter.unet import DiffusersUNetSpatioTemporalConditionModelDepthCrafter
 from dependency.DepthCrafter.depthcrafter.utils import vis_sequence_depth, read_video_frames
 
+sys.path.append('/app/dependency/Forward-Warp')
+print(f"Python path: {sys.path}")
+
+try:
+    from Forward_Warp.forward_warp import forward_warp
+except ImportError as e:
+    print(f"Import error: {e}")
+    # Try alternative import
+    try:
+        import Forward_Warp
+        print(f"Forward_Warp location: {Forward_Warp.__file__}")
+    except ImportError as e:
+        print(f"Second import error: {e}")
 from Forward_Warp import forward_warp
 
 
