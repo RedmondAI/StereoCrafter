@@ -283,7 +283,7 @@ def main(
         frames_sbs,
         fps=fps,
         video_codec="h264",
-        options={"crf": "16"},
+        options={"crf": "10"},
     )
 
 
@@ -301,7 +301,7 @@ def main(
         vid_anaglyph,
         fps=fps,
         video_codec="h264",
-        options={"crf": "16"},
+        options={"crf": "10"},
     )
 
 
