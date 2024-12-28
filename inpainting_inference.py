@@ -21,9 +21,21 @@ try:
     from decord import VideoReader, cpu
     log_time("Decord imported successfully")
 
-    log_time("Importing torch...")
+    log_time("Starting torch imports...")
+    log_time("Importing base torch...")
+    import torch.cuda
+    log_time("Checking CUDA...")
+    cuda_available = torch.cuda.is_available()
+    log_time(f"CUDA available: {cuda_available}")
+    if cuda_available:
+        log_time(f"CUDA version: {torch.version.cuda}")
+        log_time(f"GPU device count: {torch.cuda.device_count()}")
+        for i in range(torch.cuda.device_count()):
+            log_time(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+    
+    log_time("Importing full torch...")
     import torch
-    log_time(f"Torch imported successfully. CUDA available: {torch.cuda.is_available()}")
+    log_time(f"Torch imported successfully. Version: {torch.__version__}")
 
     log_time("Importing torchvision...")
     from torchvision.io import write_video
