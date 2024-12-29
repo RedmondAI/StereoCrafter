@@ -313,11 +313,12 @@ def main(
 
     frames_output = torch.cat(results, dim=0).cpu()
 
-    # Get the upper right quadrant from original input
-    frames_upper_right = frames[:num_frames, :, :height, width:]
+    # Get the upper right quadrant from original input - need to handle the original frame structure
+    frames_orig = frames[num_frames:2*num_frames]  # Get the middle chunk which has the original frames
+    frames_upper_right = frames_orig[:, :, :height, width:]
     
-    # Create a binary mask where 0s in the mask become 1s and vice versa
-    inverse_mask = (frames_mask == 0).float()
+    # Expand mask to match the channel dimension
+    inverse_mask = (frames_mask == 0).float().expand(-1, 3, -1, -1)
     
     # Use the mask to blend: keep frames_output where mask is 1, use upper right where mask is 0
     frames_output = frames_output * (1 - inverse_mask) + frames_upper_right * inverse_mask
@@ -353,22 +354,22 @@ def main(
     )
 
 
-    vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
-    vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
+    # vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
+    # vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
 
-    vid_left[:, :, :, 1] = 0
-    vid_left[:, :, :, 2] = 0
-    vid_right[:, :, :, 0] = 0
+    # vid_left[:, :, :, 1] = 0
+    # vid_left[:, :, :, 2] = 0
+    # vid_right[:, :, :, 0] = 0
 
-    vid_anaglyph = vid_left + vid_right
-    vid_anaglyph_path = os.path.join(save_dir, f"{video_name}_anaglyph.mp4")
-    write_video(
-        vid_anaglyph_path,
-        vid_anaglyph,
-        fps=fps,
-        video_codec="h264",
-        options={"crf": "10"},
-    )
+    # vid_anaglyph = vid_left + vid_right
+    # vid_anaglyph_path = os.path.join(save_dir, f"{video_name}_anaglyph.mp4")
+    # write_video(
+    #     vid_anaglyph_path,
+    #     vid_anaglyph,
+    #     fps=fps,
+    #     video_codec="h264",
+    #     options={"crf": "10"},
+    # )
 
 
 if __name__ == "__main__":
