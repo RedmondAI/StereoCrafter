@@ -53,9 +53,6 @@ try:
     from pipelines.stereo_video_inpainting import StableVideoDiffusionInpaintingPipeline, tensor2vid
     log_time("Custom pipeline imported successfully")
 
-    # We'll need functional calls (F.unfold, F.max_pool2d, F.avg_pool2d) for mask operations:
-    import torch.nn.functional as F
-
 except Exception as e:
     log_time(f"Error during imports: {str(e)}")
     log_time(f"Error type: {type(e)}")
@@ -63,7 +60,6 @@ except Exception as e:
     raise
 
 log_time("All imports successful")
-
 
 def blend_h(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor:
     weight_b = (torch.arange(overlap_size).view(1, 1, 1, -1) / overlap_size).to(
@@ -104,7 +100,7 @@ def spatial_tiled_process(
     tile_stride = (
         (tile_size[0] - tile_overlap[0]), 
         (tile_size[1] - tile_overlap[1])
-    )
+        )
     
     cols = []
     for i in range(0, tile_num):
@@ -245,6 +241,22 @@ def main(
     frames_left = frames[:, :, :height, :width]
     frames_mask = frames[:, :, height:, :width]
     frames_warpped = frames[:, :, height:, width:]
+
+    # ---------------------------------------------------------
+    # NEW CODE: Fill any black pixel (<10 in all channels)
+    # with the color from the pixel immediately to the left.
+    # This is done before we concatenate or scale to [0..1].
+    # ---------------------------------------------------------
+    threshold = 10.0  # direct integer comparison, since data is still in 0..255
+    for f in range(frames_warpped.shape[0]):
+        for h_ in range(frames_warpped.shape[2]):
+            for w_ in range(1, frames_warpped.shape[3]):
+                # check if ALL channels < 10
+                pixel = frames_warpped[f, :, h_, w_]
+                if (pixel < threshold).all():
+                    frames_warpped[f, :, h_, w_] = frames_warpped[f, :, h_, w_ - 1]
+    # ---------------------------------------------------------
+
     frames = torch.cat([frames_warpped, frames_left, frames_mask], dim=0)
 
     height = height // 128 * 128
@@ -273,6 +285,7 @@ def main(
         mask_frames_i = frames_mask[cur_i : cur_i + frames_chunk]
 
         if generated is not None:
+
             try:
                 input_frames_i[:cur_overlap] = generated[-cur_overlap:]
             except Exception as e:
@@ -316,56 +329,6 @@ def main(
 
     frames_output = torch.cat(results, dim=0).cpu()
 
-    # -----------------------------------------------------------------------------
-    # REQUESTED CHANGES BEGIN HERE
-    # 1) 3×3 median filter on the mask
-    # 2) Dilate by 5 pixels, then blur by 5 pixels
-    # 3) No binary threshold; blend smoothly
-    # 4) Match color/brightness of frames_output to frames_warpped
-    # -----------------------------------------------------------------------------
-
-    # Helper: 3×3 median filter for a single-channel mask
-    def median_filter_3x3(x: torch.Tensor) -> torch.Tensor:
-        # x shape: [B, 1, H, W]
-        # We'll use unfold + median
-        b, c, h, w = x.shape
-        # Unfold
-        x_unf = F.unfold(x, kernel_size=3, padding=1)  # [B, c*3*3, H*W]
-        # Reshape to (B, c, 9, H*W)
-        x_unf = x_unf.view(b, c, 9, h*w)
-        # Median along the 9 samples
-        x_med = x_unf.median(dim=2).values  # [B, c, H*W]
-        x_med = x_med.view(b, c, h, w)
-        return x_med
-
-    frames_count = frames_output.shape[0]
-    # Slice the mask for the same number of frames
-    frames_mask_proc = frames_mask[:frames_count]
-
-    # 1) Median filter (3×3)
-    frames_mask_proc = median_filter_3x3(frames_mask_proc)
-
-    # 2) Dilate the mask by 5 pixels, then blur by 5 pixels
-    # Morphological dilation by 5 px -> use max_pool2d w/ kernel=11
-    frames_mask_proc = F.max_pool2d(frames_mask_proc, kernel_size=11, stride=1, padding=5)
-    # Then blur by 5 px -> use avg_pool2d w/ kernel=11
-    frames_mask_proc = F.avg_pool2d(frames_mask_proc, kernel_size=11, stride=1, padding=5)
-
-    # 4) Match color of frames_output to frames_warpped
-    warpped_cpu = frames_warpped[:frames_count].cpu()
-    # Compute per-channel mean for frames_output and warpped
-    frames_output_mean = frames_output.mean(dim=[0, 2, 3], keepdim=True)
-    warpped_mean       = warpped_cpu.mean(dim=[0, 2, 3], keepdim=True)
-    ratio = warpped_mean / (frames_output_mean + 1e-5)
-    frames_output = frames_output * ratio  # shift frames_output color/brightness
-
-    # 3) No binary threshold, so blend using the processed mask
-    # Expand mask to 3 channels
-    frames_mask_3 = frames_mask_proc.repeat(1, 3, 1, 1)
-    # Smooth blend
-    frames_output = frames_output * frames_mask_3 + warpped_cpu * (1 - frames_mask_3)
-    # -----------------------------------------------------------------------------
-
     '''
     video_mask = frames_mask.repeat(1, 3, 1, 1)
     top = torch.cat([frames_left, frames_warpped], dim=3)
@@ -396,22 +359,23 @@ def main(
         options={"crf": "10"},
     )
 
-    # vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
-    # vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
 
-    # vid_left[:, :, :, 1] = 0
-    # vid_left[:, :, :, 2] = 0
-    # vid_right[:, :, :, 0] = 0
+    vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
+    vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
 
-    # vid_anaglyph = vid_left + vid_right
-    # vid_anaglyph_path = os.path.join(save_dir, f"{video_name}_anaglyph.mp4")
-    # write_video(
-    #     vid_anaglyph_path,
-    #     vid_anaglyph,
-    #     fps=fps,
-    #     video_codec="h264",
-    #     options={"crf": "10"},
-    # )
+    vid_left[:, :, :, 1] = 0
+    vid_left[:, :, :, 2] = 0
+    vid_right[:, :, :, 0] = 0
+
+    vid_anaglyph = vid_left + vid_right
+    vid_anaglyph_path = os.path.join(save_dir, f"{video_name}_anaglyph.mp4")
+    write_video(
+        vid_anaglyph_path,
+        vid_anaglyph,
+        fps=fps,
+        video_codec="h264",
+        options={"crf": "10"},
+    )
 
 
 if __name__ == "__main__":
