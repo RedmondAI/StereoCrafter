@@ -166,10 +166,23 @@ def spatial_tiled_process(
     return x
 
 
+def load_video(video_path):
+    """Helper function to load a video and convert it to the correct format."""
+    log_time(f"Loading video from {video_path}...")
+    video_reader = VideoReader(video_path, ctx=cpu(0))
+    fps = video_reader.get_avg_fps()
+    frame_indices = list(range(len(video_reader)))
+    frames = video_reader.get_batch(frame_indices)
+    # [t,h,w,c] -> [t,c,h,w]
+    frames = torch.tensor(frames.asnumpy()).permute(0, 3, 1, 2).float() / 255.0
+    return frames, fps
+
+
 def main(
     pre_trained_path,
     unet_path,
-    input_video_path,
+    input_frames_path,  # Path to the video frames to be inpainted
+    input_mask_path,    # Path to the mask video
     save_dir,
     frames_chunk=23,
     overlap=3,
@@ -222,39 +235,33 @@ def main(
     log_time("Pipeline created and moved to GPU")
 
     os.makedirs(save_dir, exist_ok=True)
-    video_name = input_video_path.split("/")[-1].replace(".mp4", "").replace("_splatting_results", "") + "_inpainting_results"
+    video_name = os.path.splitext(os.path.basename(input_frames_path))[0] + "_inpainting_results"
 
-    log_time("Loading video...")
-    video_reader = VideoReader(input_video_path, ctx=cpu(0))
-    fps = video_reader.get_avg_fps()
-    log_time(f"Video loaded: {len(video_reader)} frames at {fps} FPS")
-    frame_indices = list(range(len(video_reader)))
-    frames = video_reader.get_batch(frame_indices)
-    num_frames = len(video_reader)
+    # Load input frames and mask
+    frames_warpped, fps = load_video(input_frames_path)
+    frames_mask, _ = load_video(input_mask_path)
+    
+    # Ensure videos have matching dimensions
+    if frames_warpped.shape[2:] != frames_mask.shape[2:]:
+        raise ValueError("Input frames and mask must have the same height and width")
+    if frames_warpped.shape[0] != frames_mask.shape[0]:
+        raise ValueError("Input frames and mask must have the same number of frames")
 
-    # [t,h,w,c] -> [t,c,h,w]
-    frames = (
-        torch.tensor(frames.asnumpy()).permute(0, 3, 1, 2).float()
-    )  
+    # Convert mask to single channel if it's not already
+    if frames_mask.shape[1] > 1:
+        frames_mask = frames_mask.mean(dim=1, keepdim=True)
 
-    height, width = frames.shape[2] // 2, frames.shape[3] // 2
-    frames_left = frames[:, :, :height, :width]
-    frames_mask = frames[:, :, height:, :width]
-    frames_warpped = frames[:, :, height:, width:]
-    frames = torch.cat([frames_warpped, frames_left, frames_mask], dim=0)
+    # Ensure dimensions are multiples of 128
+    height = frames_warpped.shape[2] // 128 * 128
+    width = frames_warpped.shape[3] // 128 * 128
+    frames_warpped = frames_warpped[:, :, :height, :width]
+    frames_mask = frames_mask[:, :, :height, :width]
 
-    height = height // 128 * 128
-    width = width // 128 * 128
-    frames = frames[:, :, 0:height, 0:width]
-
-    frames = frames / 255.0
-    frames_warpped, frames_left, frames_mask = torch.chunk(frames, chunks=3, dim=0)
-    frames_mask = frames_mask.mean(dim=1, keepdim=True)
-
+    num_frames = frames_warpped.shape[0]
     results = []
     generated = None
+    
     for i in range(0, num_frames, frames_chunk - overlap):
-
         if i + overlap >= frames_warpped.shape[0]:
             break
 
@@ -269,7 +276,6 @@ def main(
         mask_frames_i = frames_mask[cur_i : cur_i + frames_chunk]
 
         if generated is not None:
-
             try:
                 input_frames_i[:cur_overlap] = generated[-cur_overlap:]
             except Exception as e:
@@ -313,35 +319,8 @@ def main(
 
     frames_output = torch.cat(results, dim=0).cpu()
 
-    # Get the upper right quadrant from original input
-    frames_upper_right = frames[:num_frames, :, :height, width:]
-    
-    # Create a binary mask where 0s in the mask become 1s and vice versa
-    inverse_mask = (frames_mask == 0).float()
-    
-    # Use the mask to blend: keep frames_output where mask is 1, use upper right where mask is 0
-    frames_output = frames_output * (1 - inverse_mask) + frames_upper_right * inverse_mask
-
-    '''
-    video_mask = frames_mask.repeat(1, 3, 1, 1)
-    top = torch.cat([frames_left, frames_warpped], dim=3)
-    bottom = torch.cat([video_mask, frames_output], dim=3)
-
-    frames_all = torch.cat([top, bottom], dim=2)
-    frames_all_path = os.path.join(save_dir, f"{video_name}.mp4")
-    os.makedirs(os.path.dirname(frames_all_path), exist_ok=True)
-
-    frames_all = (frames_all * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu()
-    write_video(
-        frames_all_path,
-        frames_all,
-        fps=fps,
-        video_codec="h264",
-        options={"crf": "16"},
-    )
-    '''
-
-    frames_sbs = torch.cat([frames_left, frames_output], dim=3)
+    # Save side-by-side comparison
+    frames_sbs = torch.cat([frames_warpped, frames_output], dim=3)
     frames_sbs_path = os.path.join(save_dir, f"{video_name}_sbs.mp4")
     frames_sbs = ((frames_sbs * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu())
     write_video(
@@ -352,8 +331,8 @@ def main(
         options={"crf": "10"},
     )
 
-
-    vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
+    # Save anaglyph version
+    vid_left = (frames_warpped * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
     vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
 
     vid_left[:, :, :, 1] = 0
@@ -372,4 +351,4 @@ def main(
 
 
 if __name__ == "__main__":
-    Fire(main)
+    Fire(main) 
