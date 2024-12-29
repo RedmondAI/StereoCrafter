@@ -70,7 +70,6 @@ def blend_h(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor
     ] + weight_b * b[:, :, :, :overlap_size]
     return b
 
-
 def blend_v(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor:
     weight_b = (torch.arange(overlap_size).view(1, 1, -1, 1) / overlap_size).to(
         b.device
@@ -79,7 +78,6 @@ def blend_v(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor
         :, :, -overlap_size:, :
     ] + weight_b * b[:, :, :overlap_size, :]
     return b
-
 
 def spatial_tiled_process(
     cond_frames,
@@ -100,7 +98,7 @@ def spatial_tiled_process(
     tile_stride = (
         (tile_size[0] - tile_overlap[0]), 
         (tile_size[1] - tile_overlap[1])
-        )
+    )
     
     cols = []
     for i in range(0, tile_num):
@@ -164,7 +162,6 @@ def spatial_tiled_process(
         pixels.append(torch.cat(rows, dim=3))
     x = torch.cat(pixels, dim=2)
     return x
-
 
 def main(
     pre_trained_path,
@@ -243,18 +240,23 @@ def main(
     frames_warpped = frames[:, :, height:, width:]
 
     # ---------------------------------------------------------
-    # NEW CODE: Fill any black pixel (<10 in all channels)
-    # with the color from the pixel immediately to the left.
-    # This is done before we concatenate or scale to [0..1].
+    # REPLACED the triple nested loop with a single pass over W
+    # to fill black pixels (<10) from the pixel on the left.
     # ---------------------------------------------------------
-    threshold = 10.0  # direct integer comparison, since data is still in 0..255
-    for f in range(frames_warpped.shape[0]):
-        for h_ in range(frames_warpped.shape[2]):
-            for w_ in range(1, frames_warpped.shape[3]):
-                # check if ALL channels < 10
-                pixel = frames_warpped[f, :, h_, w_]
-                if (pixel < threshold).all():
-                    frames_warpped[f, :, h_, w_] = frames_warpped[f, :, h_, w_ - 1]
+    threshold = 10.0  # Compare in 0..255 range
+    T = frames_warpped.shape[0]  # number of frames
+    C = frames_warpped.shape[1]  # channels (likely 3)
+    H = frames_warpped.shape[2]
+    W = frames_warpped.shape[3]
+
+    # Go from left to right
+    for w_ in range(1, W):
+        # Find which pixels in column w_ are black in all channels
+        # shape: [T, H, C], so we do .all(dim=1) across channels -> [T, H]
+        black_mask = (frames_warpped[:, :, :, w_] < threshold).all(dim=1)
+        # Fill them from column w_ - 1
+        for c_ in range(C):
+            frames_warpped[:, c_, :, w_][black_mask] = frames_warpped[:, c_, :, w_ - 1][black_mask]
     # ---------------------------------------------------------
 
     frames = torch.cat([frames_warpped, frames_left, frames_mask], dim=0)
@@ -285,7 +287,6 @@ def main(
         mask_frames_i = frames_mask[cur_i : cur_i + frames_chunk]
 
         if generated is not None:
-
             try:
                 input_frames_i[:cur_overlap] = generated[-cur_overlap:]
             except Exception as e:
@@ -359,7 +360,6 @@ def main(
         options={"crf": "10"},
     )
 
-
     vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
     vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
 
@@ -376,7 +376,6 @@ def main(
         video_codec="h264",
         options={"crf": "10"},
     )
-
 
 if __name__ == "__main__":
     Fire(main)
