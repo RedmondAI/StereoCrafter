@@ -53,6 +53,9 @@ try:
     from pipelines.stereo_video_inpainting import StableVideoDiffusionInpaintingPipeline, tensor2vid
     log_time("Custom pipeline imported successfully")
 
+    # We'll need functional calls (F.unfold, F.max_pool2d, F.avg_pool2d) for mask operations:
+    import torch.nn.functional as F
+
 except Exception as e:
     log_time(f"Error during imports: {str(e)}")
     log_time(f"Error type: {type(e)}")
@@ -60,6 +63,7 @@ except Exception as e:
     raise
 
 log_time("All imports successful")
+
 
 def blend_h(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor:
     weight_b = (torch.arange(overlap_size).view(1, 1, 1, -1) / overlap_size).to(
@@ -70,6 +74,7 @@ def blend_h(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor
     ] + weight_b * b[:, :, :, :overlap_size]
     return b
 
+
 def blend_v(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor:
     weight_b = (torch.arange(overlap_size).view(1, 1, -1, 1) / overlap_size).to(
         b.device
@@ -78,6 +83,7 @@ def blend_v(a: torch.Tensor, b: torch.Tensor, overlap_size: int) -> torch.Tensor
         :, :, -overlap_size:, :
     ] + weight_b * b[:, :, :overlap_size, :]
     return b
+
 
 def spatial_tiled_process(
     cond_frames,
@@ -104,6 +110,7 @@ def spatial_tiled_process(
     for i in range(0, tile_num):
         rows = []
         for j in range(0, tile_num):
+
             cond_tile = cond_frames[
                 :,
                 :,
@@ -162,6 +169,7 @@ def spatial_tiled_process(
     x = torch.cat(pixels, dim=2)
     return x
 
+
 def main(
     pre_trained_path,
     unet_path,
@@ -218,12 +226,7 @@ def main(
     log_time("Pipeline created and moved to GPU")
 
     os.makedirs(save_dir, exist_ok=True)
-    video_name = (
-        input_video_path.split("/")[-1]
-        .replace(".mp4", "")
-        .replace("_splatting_results", "")
-        + "_inpainting_results"
-    )
+    video_name = input_video_path.split("/")[-1].replace(".mp4", "").replace("_splatting_results", "") + "_inpainting_results"
 
     log_time("Loading video...")
     video_reader = VideoReader(input_video_path, ctx=cpu(0))
@@ -238,17 +241,10 @@ def main(
         torch.tensor(frames.asnumpy()).permute(0, 3, 1, 2).float()
     )  
 
-    # The video is split into quadrants or stacked sections:
-    #   top-left: frames_left
-    #   top-right: unknown or might be something else
-    #   bottom-left: frames_mask
-    #   bottom-right: frames_warpped
-    # Then we reorder them or slice them as needed
     height, width = frames.shape[2] // 2, frames.shape[3] // 2
     frames_left = frames[:, :, :height, :width]
     frames_mask = frames[:, :, height:, :width]
     frames_warpped = frames[:, :, height:, width:]
-    # We re-concatenate them in a particular order for processing
     frames = torch.cat([frames_warpped, frames_left, frames_mask], dim=0)
 
     height = height // 128 * 128
@@ -257,7 +253,6 @@ def main(
 
     frames = frames / 255.0
     frames_warpped, frames_left, frames_mask = torch.chunk(frames, chunks=3, dim=0)
-    # Make the mask single-channel
     frames_mask = frames_mask.mean(dim=1, keepdim=True)
 
     results = []
@@ -283,8 +278,7 @@ def main(
             except Exception as e:
                 print(e)
                 print(
-                    f"i: {i}, cur_i: {cur_i}, cur_overlap: {cur_overlap}, "
-                    f"input_frames_i: {input_frames_i.shape}, generated: {generated.shape}"
+                    f"i: {i}, cur_i: {cur_i}, cur_overlap: {cur_overlap}, input_frames_i: {input_frames_i.shape}, generated: {generated.shape}"
                 )
 
         video_latents = spatial_tiled_process(
@@ -306,19 +300,13 @@ def main(
         if video_latents == torch.float16:
             pipeline.vae.to(dtype=torch.float16)
 
-        video_frames = pipeline.decode_latents(
-            video_latents, 
-            num_frames=video_latents.shape[1], 
-            decode_chunk_size=2
-        )
+        video_frames = pipeline.decode_latents(video_latents, num_frames=video_latents.shape[1], decode_chunk_size=2)
         video_frames = tensor2vid(video_frames, pipeline.image_processor, output_type="pil")[0]
 
         for j in range(len(video_frames)):
             img = video_frames[j]
             video_frames[j] = (
-                torch.tensor(np.array(img))
-                .permute(2, 0, 1)
-                .to(dtype=torch.float32)
+                torch.tensor(np.array(img)).permute(2, 0, 1).to(dtype=torch.float32)
                 / 255.0
             )
         generated = torch.stack(video_frames)
@@ -326,40 +314,80 @@ def main(
             generated = generated[cur_overlap:]
         results.append(generated)
 
-    # After we have all results, concatenate them
     frames_output = torch.cat(results, dim=0).cpu()
 
-    # -------------------------------------------------------------------------
-    # NEW CODE: Replace any pixels that are 0 in the mask with the pixels from
-    # the upper-right video region (frames_warpped). Turn the mask into binary.
-    # -------------------------------------------------------------------------
-    # Ensure shapes align for the final output:
-    # frames_output: [num_frames, 3, H, W]
-    # frames_warpped: [num_frames, 3, H, W]
-    # frames_mask: [num_frames, 1, H, W]
-    # We only take as many frames from frames_warpped as are in frames_output.
+    # -----------------------------------------------------------------------------
+    # REQUESTED CHANGES BEGIN HERE
+    # 1) 3×3 median filter on the mask
+    # 2) Dilate by 5 pixels, then blur by 5 pixels
+    # 3) No binary threshold; blend smoothly
+    # 4) Match color/brightness of frames_output to frames_warpped
+    # -----------------------------------------------------------------------------
+
+    # Helper: 3×3 median filter for a single-channel mask
+    def median_filter_3x3(x: torch.Tensor) -> torch.Tensor:
+        # x shape: [B, 1, H, W]
+        # We'll use unfold + median
+        b, c, h, w = x.shape
+        # Unfold
+        x_unf = F.unfold(x, kernel_size=3, padding=1)  # [B, c*3*3, H*W]
+        # Reshape to (B, c, 9, H*W)
+        x_unf = x_unf.view(b, c, 9, h*w)
+        # Median along the 9 samples
+        x_med = x_unf.median(dim=2).values  # [B, c, H*W]
+        x_med = x_med.view(b, c, h, w)
+        return x_med
+
     frames_count = frames_output.shape[0]
-    mask_bin = (frames_mask[:frames_count] > 0.5).float()  # threshold at 0.5
-    mask_bin_3 = mask_bin.repeat(1, 3, 1, 1)
+    # Slice the mask for the same number of frames
+    frames_mask_proc = frames_mask[:frames_count]
+
+    # 1) Median filter (3×3)
+    frames_mask_proc = median_filter_3x3(frames_mask_proc)
+
+    # 2) Dilate the mask by 5 pixels, then blur by 5 pixels
+    # Morphological dilation by 5 px -> use max_pool2d w/ kernel=11
+    frames_mask_proc = F.max_pool2d(frames_mask_proc, kernel_size=11, stride=1, padding=5)
+    # Then blur by 5 px -> use avg_pool2d w/ kernel=11
+    frames_mask_proc = F.avg_pool2d(frames_mask_proc, kernel_size=11, stride=1, padding=5)
+
+    # 4) Match color of frames_output to frames_warpped
     warpped_cpu = frames_warpped[:frames_count].cpu()
-    
-    # Where mask == 0, take from warpped
-    # Where mask == 1, keep frames_output
-    frames_output = frames_output * mask_bin_3 + warpped_cpu * (1 - mask_bin_3)
-    # -------------------------------------------------------------------------
+    # Compute per-channel mean for frames_output and warpped
+    frames_output_mean = frames_output.mean(dim=[0, 2, 3], keepdim=True)
+    warpped_mean       = warpped_cpu.mean(dim=[0, 2, 3], keepdim=True)
+    ratio = warpped_mean / (frames_output_mean + 1e-5)
+    frames_output = frames_output * ratio  # shift frames_output color/brightness
 
-    # Below are examples of saving different variants.
-    # If you do not need all versions, remove/comment them as necessary.
+    # 3) No binary threshold, so blend using the processed mask
+    # Expand mask to 3 channels
+    frames_mask_3 = frames_mask_proc.repeat(1, 3, 1, 1)
+    # Smooth blend
+    frames_output = frames_output * frames_mask_3 + warpped_cpu * (1 - frames_mask_3)
+    # -----------------------------------------------------------------------------
 
-    # Side-by-side output (left view + inpainted view)
-    frames_sbs = torch.cat([frames_left[:frames_count], frames_output], dim=3)
-    frames_sbs_path = os.path.join(save_dir, f"{video_name}_sbs.mp4")
-    frames_sbs = (
-        (frames_sbs * 255)
-        .permute(0, 2, 3, 1)
-        .to(dtype=torch.uint8)
-        .cpu()
+    '''
+    video_mask = frames_mask.repeat(1, 3, 1, 1)
+    top = torch.cat([frames_left, frames_warpped], dim=3)
+    bottom = torch.cat([video_mask, frames_output], dim=3)
+
+    frames_all = torch.cat([top, bottom], dim=2)
+    frames_all_path = os.path.join(save_dir, f"{video_name}.mp4")
+    os.makedirs(os.path.dirname(frames_all_path), exist_ok=True)
+
+    frames_all = (frames_all * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu()
+    write_video(
+        frames_all_path,
+        frames_all,
+        fps=fps,
+        video_codec="h264",
+        options={"crf": "16"},
     )
+    '''
+
+    frames_sbs = torch.cat([frames_left, frames_output], dim=3)
+    frames_sbs_path = os.path.join(save_dir, f"{video_name}_sbs.mp4")
+    frames_sbs = ((frames_sbs * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu())
     write_video(
         frames_sbs_path,
         frames_sbs,
@@ -368,26 +396,11 @@ def main(
         options={"crf": "10"},
     )
 
-    # # Simple anaglyph for a 3D effect
-    # vid_left = (
-    #     (frames_left[:frames_count] * 255)
-    #     .permute(0, 2, 3, 1)
-    #     .to(dtype=torch.uint8)
-    #     .cpu()
-    #     .numpy()
-    # )
-    # vid_right = (
-    #     (frames_output * 255)
-    #     .permute(0, 2, 3, 1)
-    #     .to(dtype=torch.uint8)
-    #     .cpu()
-    #     .numpy()
-    # )
+    # vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
+    # vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
 
-    # # Make left purely red channel
     # vid_left[:, :, :, 1] = 0
     # vid_left[:, :, :, 2] = 0
-    # # Make right purely green/blue channels
     # vid_right[:, :, :, 0] = 0
 
     # vid_anaglyph = vid_left + vid_right
@@ -400,6 +413,6 @@ def main(
     #     options={"crf": "10"},
     # )
 
+
 if __name__ == "__main__":
-    from fire import Fire
     Fire(main)
