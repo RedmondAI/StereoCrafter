@@ -169,7 +169,7 @@ def main(
     input_video_path,
     save_dir,
     frames_chunk=23,
-    overlap=3,
+    overlap=8,
     tile_num=1,
     spatial_n_compress=8,
     num_inference_steps=50
