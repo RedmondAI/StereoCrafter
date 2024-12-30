@@ -89,45 +89,56 @@ def spatial_tiled_process(
 ):
     height = cond_frames.shape[2]
     width = cond_frames.shape[3]
+    print(f"\nInput dimensions: height={height}, width={width}")
 
     # Base overlap in pixel space
     base_overlap = 128
+    print(f"Base overlap: {base_overlap}")
     
     # Calculate minimum tile size needed
     min_tile_size = (
         height // tile_num + base_overlap * (tile_num - 1) // tile_num,
         width // tile_num + base_overlap * (tile_num - 1) // tile_num
     )
+    print(f"Minimum tile size: {min_tile_size}")
     
     # Round up to nearest multiple of 128
     tile_size = (
         ((min_tile_size[0] + 127) // 128) * 128,
         ((min_tile_size[1] + 127) // 128) * 128
     )
+    print(f"Rounded tile size: {tile_size}")
     
     # Overlap in pixel space
     tile_overlap = (base_overlap, base_overlap)
+    print(f"Tile overlap: {tile_overlap}")
     
     # Calculate stride
     tile_stride = (
         tile_size[0] - tile_overlap[0],
         tile_size[1] - tile_overlap[1]
     )
+    print(f"Tile stride: {tile_stride}")
     
     # Adjust input dimensions to match tile layout
     total_height = tile_stride[0] * tile_num + tile_overlap[0]
     total_width = tile_stride[1] * tile_num + tile_overlap[1]
+    print(f"Total dimensions needed: height={total_height}, width={total_width}")
     
     if total_height > height or total_width > width:
         # Pad input if needed
         pad_height = max(0, total_height - height)
         pad_width = max(0, total_width - width)
+        print(f"Padding needed: height={pad_height}, width={pad_width}")
         cond_frames = torch.nn.functional.pad(cond_frames, (0, pad_width, 0, pad_height))
         mask_frames = torch.nn.functional.pad(mask_frames, (0, pad_width, 0, pad_height))
     else:
         # Crop input if needed
+        print(f"Cropping to: height={total_height}, width={total_width}")
         cond_frames = cond_frames[:, :, :total_height, :total_width]
         mask_frames = mask_frames[:, :, :total_height, :total_width]
+    
+    print(f"Adjusted input dimensions: {cond_frames.shape}")
     
     cols = []
     for i in range(tile_num):
@@ -146,6 +157,10 @@ def spatial_tiled_process(
                 start_h:start_h + tile_size[0],
                 start_w:start_w + tile_size[1]
             ]
+            
+            print(f"\nTile ({i},{j}) dimensions:")
+            print(f"  Start position: ({start_h}, {start_w})")
+            print(f"  Tile shape: {cond_tile.shape}")
 
             tile = process_func(
                 frames=cond_tile,
@@ -157,6 +172,7 @@ def spatial_tiled_process(
                 **kargs,
             ).frames[0]
             
+            print(f"  Latent tile shape: {tile.shape}")
             rows.append(tile)
         cols.append(rows)
 
@@ -169,6 +185,9 @@ def spatial_tiled_process(
         tile_overlap[0] // spatial_n_compress,
         tile_overlap[1] // spatial_n_compress
     )
+    print(f"\nLatent space dimensions:")
+    print(f"  Stride: {latent_stride}")
+    print(f"  Overlap: {latent_overlap}")
 
     # Blend tiles in latent space
     results_cols = []
@@ -176,8 +195,16 @@ def spatial_tiled_process(
         results_rows = []
         for j, tile in enumerate(rows):
             if i > 0:
+                print(f"\nVertical blend at ({i},{j}):")
+                print(f"  Previous tile shape: {cols[i-1][j].shape}")
+                print(f"  Current tile shape: {tile.shape}")
+                print(f"  Overlap size: {latent_overlap[0]}")
                 tile = blend_v(cols[i - 1][j], tile, latent_overlap[0])
             if j > 0:
+                print(f"\nHorizontal blend at ({i},{j}):")
+                print(f"  Previous tile shape: {rows[j-1].shape}")
+                print(f"  Current tile shape: {tile.shape}")
+                print(f"  Overlap size: {latent_overlap[1]}")
                 tile = blend_h(rows[j - 1], tile, latent_overlap[1])
             results_rows.append(tile)
         results_cols.append(results_rows)
@@ -190,9 +217,11 @@ def spatial_tiled_process(
                 tile = tile[:, :, :latent_stride[0], :]
             if j < len(rows) - 1:
                 tile = tile[:, :, :, :latent_stride[1]]
+            print(f"\nFinal tile ({i},{j}) shape: {tile.shape}")
             rows[j] = tile
         pixels.append(torch.cat(rows, dim=3))
     x = torch.cat(pixels, dim=2)
+    print(f"\nFinal output shape: {x.shape}")
     
     return x
 
