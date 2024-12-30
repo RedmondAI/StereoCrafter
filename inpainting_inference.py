@@ -90,11 +90,23 @@ def spatial_tiled_process(
     height = cond_frames.shape[2]
     width = cond_frames.shape[3]
 
-    tile_overlap = (128, 128)
-    tile_size = (
-        int((height + tile_overlap[0] *  (tile_num - 1)) / tile_num), 
-        int((width  + tile_overlap[1] * (tile_num - 1)) / tile_num)
+    # Make overlap size divisible by spatial_n_compress
+    tile_overlap = (
+        (128 // spatial_n_compress) * spatial_n_compress,
+        (128 // spatial_n_compress) * spatial_n_compress
     )
+    
+    tile_size = (
+        int((height + tile_overlap[0] * (tile_num - 1)) / tile_num), 
+        int((width + tile_overlap[1] * (tile_num - 1)) / tile_num)
+    )
+    
+    # Ensure tile_size is divisible by spatial_n_compress
+    tile_size = (
+        (tile_size[0] // spatial_n_compress) * spatial_n_compress,
+        (tile_size[1] // spatial_n_compress) * spatial_n_compress
+    )
+    
     tile_stride = (
         (tile_size[0] - tile_overlap[0]), 
         (tile_size[1] - tile_overlap[1])
@@ -104,7 +116,6 @@ def spatial_tiled_process(
     for i in range(0, tile_num):
         rows = []
         for j in range(0, tile_num):
-
             cond_tile = cond_frames[
                 :,
                 :,
