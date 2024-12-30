@@ -98,20 +98,22 @@ def spatial_tiled_process(
     if debug:
         print(f"Base overlap: {base_overlap}")
     
-    # Calculate minimum tile size needed
-    min_tile_size = (
-        height // tile_num + base_overlap * (tile_num - 1) // tile_num,
-        width // tile_num + base_overlap * (tile_num - 1) // tile_num
-    )
-    if debug:
-        print(f"Minimum tile size: {min_tile_size}")
+    # Calculate tile size to evenly divide the image
+    # Add overlap to total size first, then divide
+    padded_height = height + base_overlap * (tile_num - 1)
+    padded_width = width + base_overlap * (tile_num - 1)
     
-    # Round up to nearest multiple of 128 (VAE requires multiples of 8)
+    # Calculate base tile size (before rounding)
+    base_tile_height = padded_height // tile_num
+    base_tile_width = padded_width // tile_num
+    
+    # Round up to nearest multiple of 128
     tile_size = (
-        ((min_tile_size[0] + 127) // 128) * 128,
-        ((min_tile_size[1] + 127) // 128) * 128
+        ((base_tile_height + 127) // 128) * 128,
+        ((base_tile_width + 127) // 128) * 128
     )
     if debug:
+        print(f"Base tile size: ({base_tile_height}, {base_tile_width})")
         print(f"Rounded tile size: {tile_size}")
     
     # Overlap in pixel space
@@ -119,66 +121,78 @@ def spatial_tiled_process(
     if debug:
         print(f"Tile overlap: {tile_overlap}")
     
-    # Calculate stride
+    # Calculate stride to evenly distribute tiles
     tile_stride = (
-        tile_size[0] - tile_overlap[0],
-        tile_size[1] - tile_overlap[1]
+        (height - tile_size[0] + tile_overlap[0]) // (tile_num - 1) if tile_num > 1 else 0,
+        (width - tile_size[1] + tile_overlap[1]) // (tile_num - 1) if tile_num > 1 else 0
     )
     if debug:
         print(f"Tile stride: {tile_stride}")
     
-    # Adjust input dimensions to match tile layout
-    total_height = tile_stride[0] * tile_num + tile_overlap[0]
-    total_width = tile_stride[1] * tile_num + tile_overlap[1]
+    # Calculate total dimensions needed
+    total_height = tile_size[0] + (tile_num - 1) * tile_stride[0] if tile_num > 1 else tile_size[0]
+    total_width = tile_size[1] + (tile_num - 1) * tile_stride[1] if tile_num > 1 else tile_size[1]
     if debug:
         print(f"Total dimensions needed: height={total_height}, width={total_width}")
     
-    if total_height > height or total_width > width:
-        # Pad input if needed
-        pad_height = max(0, total_height - height)
-        pad_width = max(0, total_width - width)
+    # Pad input if needed
+    pad_height = max(0, total_height - height)
+    pad_width = max(0, total_width - width)
+    if pad_height > 0 or pad_width > 0:
         if debug:
             print(f"Padding needed: height={pad_height}, width={pad_width}")
-        cond_frames = torch.nn.functional.pad(cond_frames, (0, pad_width, 0, pad_height))
-        mask_frames = torch.nn.functional.pad(mask_frames, (0, pad_width, 0, pad_height))
-    else:
-        # Crop input if needed
-        if debug:
-            print(f"Cropping to: height={total_height}, width={total_width}")
-        cond_frames = cond_frames[:, :, :total_height, :total_width]
-        mask_frames = mask_frames[:, :, :total_height, :total_width]
+        pad_left = 0
+        pad_right = pad_width
+        pad_top = 0
+        pad_bottom = pad_height
+        cond_frames = torch.nn.functional.pad(cond_frames, (pad_left, pad_right, pad_top, pad_bottom))
+        mask_frames = torch.nn.functional.pad(mask_frames, (pad_left, pad_right, pad_top, pad_bottom))
     
     if debug:
         print(f"Adjusted input dimensions: {cond_frames.shape}")
     
+    # Process tiles
     cols = []
     for i in range(tile_num):
         rows = []
         for j in range(tile_num):
-            start_h = i * tile_stride[0]
-            start_w = j * tile_stride[1]
+            # Calculate start position for this tile
+            start_h = i * tile_stride[0] if tile_num > 1 else 0
+            start_w = j * tile_stride[1] if tile_num > 1 else 0
+            
+            # Ensure we don't exceed image boundaries
+            end_h = min(start_h + tile_size[0], height + pad_height)
+            end_w = min(start_w + tile_size[1], width + pad_width)
             
             cond_tile = cond_frames[
                 :, :,
-                start_h:start_h + tile_size[0],
-                start_w:start_w + tile_size[1]
+                start_h:end_h,
+                start_w:end_w
             ]
             mask_tile = mask_frames[
                 :, :,
-                start_h:start_h + tile_size[0],
-                start_w:start_w + tile_size[1]
+                start_h:end_h,
+                start_w:end_w
             ]
             
             if debug:
                 print(f"\nTile ({i},{j}) dimensions:")
                 print(f"  Start position: ({start_h}, {start_w})")
+                print(f"  End position: ({end_h}, {end_w})")
                 print(f"  Tile shape: {cond_tile.shape}")
+
+            # Pad the tile if it's smaller than tile_size
+            if cond_tile.shape[2:] != tile_size:
+                pad_h = tile_size[0] - cond_tile.shape[2]
+                pad_w = tile_size[1] - cond_tile.shape[3]
+                cond_tile = torch.nn.functional.pad(cond_tile, (0, pad_w, 0, pad_h))
+                mask_tile = torch.nn.functional.pad(mask_tile, (0, pad_w, 0, pad_h))
 
             tile = process_func(
                 frames=cond_tile,
                 frames_mask=mask_tile,
-                height=cond_tile.shape[2],
-                width=cond_tile.shape[3],
+                height=tile_size[0],
+                width=tile_size[1],
                 num_frames=len(cond_tile),
                 output_type="latent",
                 **kargs,
