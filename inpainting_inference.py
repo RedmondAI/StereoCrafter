@@ -273,6 +273,7 @@ def main(
 
     results = []
     generated = None
+    start_time = time.time()  # Start timing
     for i in range(0, num_frames, frames_chunk - overlap):
 
         if i + overlap >= frames_warpped.shape[0]:
@@ -331,6 +332,8 @@ def main(
         results.append(generated)
 
     frames_output = torch.cat(results, dim=0).cpu()
+    processing_time = round(time.time() - start_time, 2)  # End timing
+    log_time(f"Frame processing took {processing_time} seconds")
 
     '''
     video_mask = frames_mask.repeat(1, 3, 1, 1)
@@ -354,7 +357,7 @@ def main(
     #frames_sbs = torch.cat([frames_left, frames_output], dim=3)
     #frames_sbs_path = os.path.join(save_dir, f"{video_name}_sbs.mp4")
     #frames_sbs = torch.cat([frames_left, frames_output], dim=3)
-    frames_sbs_path = os.path.join(save_dir, f"{video_name}_inpainted.mp4")
+    frames_sbs_path = os.path.join(save_dir, f"{video_name}_inpainted_{processing_time}s.mp4")
     frames_sbs = ((frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu())
     write_video(
         frames_sbs_path,
