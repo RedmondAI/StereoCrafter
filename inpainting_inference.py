@@ -90,10 +90,15 @@ def spatial_tiled_process(
     height = cond_frames.shape[2]
     width = cond_frames.shape[3]
 
-    # Make overlap size divisible by spatial_n_compress
+    # First ensure input dimensions are divisible by both spatial_n_compress and tile_num
+    height = height // (128 * spatial_n_compress) * (128 * spatial_n_compress)
+    width = width // (128 * spatial_n_compress) * (128 * spatial_n_compress)
+    
+    # Calculate overlap in the compressed space
+    base_overlap = 128
     tile_overlap = (
-        (128 // spatial_n_compress) * spatial_n_compress,
-        (128 // spatial_n_compress) * spatial_n_compress
+        base_overlap,
+        base_overlap
     )
     
     tile_size = (
@@ -101,10 +106,10 @@ def spatial_tiled_process(
         int((width + tile_overlap[1] * (tile_num - 1)) / tile_num)
     )
     
-    # Ensure tile_size is divisible by spatial_n_compress
+    # Ensure tile_size is divisible by 128
     tile_size = (
-        (tile_size[0] // spatial_n_compress) * spatial_n_compress,
-        (tile_size[1] // spatial_n_compress) * spatial_n_compress
+        (tile_size[0] // 128) * 128,
+        (tile_size[1] // 128) * 128
     )
     
     tile_stride = (
@@ -274,11 +279,7 @@ def main(
 
     frames = torch.cat([frames_warpped, frames_left, frames_mask], dim=0)
 
-    # Ensure dimensions are compatible with both tile_num and model requirements
-    height = height // (128 * tile_num) * (128 * tile_num)
-    width = width // (128 * tile_num) * (128 * tile_num)
-    frames = frames[:, :, 0:height, 0:width]
-
+    # Dimensions will be adjusted in spatial_tiled_process
     frames = frames / 255.0
     frames_warpped, frames_left, frames_mask = torch.chunk(frames, chunks=3, dim=0)
     frames_mask = frames_mask.mean(dim=1, keepdim=True)
