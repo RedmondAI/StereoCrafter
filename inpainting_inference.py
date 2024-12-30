@@ -263,8 +263,9 @@ def main(
 
     frames = torch.cat([frames_warpped, frames_left, frames_mask], dim=0)
 
-    height = height // 128 * 128
-    width = width // 128 * 128
+    # Ensure dimensions are compatible with both tile_num and model requirements
+    height = height // (128 * tile_num) * (128 * tile_num)
+    width = width // (128 * tile_num) * (128 * tile_num)
     frames = frames[:, :, 0:height, 0:width]
 
     frames = frames / 255.0
