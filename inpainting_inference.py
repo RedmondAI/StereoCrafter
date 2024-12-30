@@ -90,48 +90,61 @@ def spatial_tiled_process(
     height = cond_frames.shape[2]
     width = cond_frames.shape[3]
 
-    # First ensure input dimensions are divisible by both spatial_n_compress and tile_num
-    height = height // (128 * spatial_n_compress) * (128 * spatial_n_compress)
-    width = width // (128 * spatial_n_compress) * (128 * spatial_n_compress)
-    
-    # Calculate overlap in the compressed space
+    # Base overlap in pixel space
     base_overlap = 128
-    tile_overlap = (
-        base_overlap,
-        base_overlap
+    
+    # Calculate minimum tile size needed
+    min_tile_size = (
+        height // tile_num + base_overlap * (tile_num - 1) // tile_num,
+        width // tile_num + base_overlap * (tile_num - 1) // tile_num
     )
     
+    # Round up to nearest multiple of 128
     tile_size = (
-        int((height + tile_overlap[0] * (tile_num - 1)) / tile_num), 
-        int((width + tile_overlap[1] * (tile_num - 1)) / tile_num)
+        ((min_tile_size[0] + 127) // 128) * 128,
+        ((min_tile_size[1] + 127) // 128) * 128
     )
     
-    # Ensure tile_size is divisible by 128
-    tile_size = (
-        (tile_size[0] // 128) * 128,
-        (tile_size[1] // 128) * 128
-    )
+    # Overlap in pixel space
+    tile_overlap = (base_overlap, base_overlap)
     
+    # Calculate stride
     tile_stride = (
-        (tile_size[0] - tile_overlap[0]), 
-        (tile_size[1] - tile_overlap[1])
+        tile_size[0] - tile_overlap[0],
+        tile_size[1] - tile_overlap[1]
     )
+    
+    # Adjust input dimensions to match tile layout
+    total_height = tile_stride[0] * tile_num + tile_overlap[0]
+    total_width = tile_stride[1] * tile_num + tile_overlap[1]
+    
+    if total_height > height or total_width > width:
+        # Pad input if needed
+        pad_height = max(0, total_height - height)
+        pad_width = max(0, total_width - width)
+        cond_frames = torch.nn.functional.pad(cond_frames, (0, pad_width, 0, pad_height))
+        mask_frames = torch.nn.functional.pad(mask_frames, (0, pad_width, 0, pad_height))
+    else:
+        # Crop input if needed
+        cond_frames = cond_frames[:, :, :total_height, :total_width]
+        mask_frames = mask_frames[:, :, :total_height, :total_width]
     
     cols = []
-    for i in range(0, tile_num):
+    for i in range(tile_num):
         rows = []
-        for j in range(0, tile_num):
+        for j in range(tile_num):
+            start_h = i * tile_stride[0]
+            start_w = j * tile_stride[1]
+            
             cond_tile = cond_frames[
-                :,
-                :,
-                i * tile_stride[0] : i * tile_stride[0] + tile_size[0],
-                j * tile_stride[1] : j * tile_stride[1] + tile_size[1],
+                :, :,
+                start_h:start_h + tile_size[0],
+                start_w:start_w + tile_size[1]
             ]
             mask_tile = mask_frames[
-                :,
-                :,
-                i * tile_stride[0] : i * tile_stride[0] + tile_size[0],
-                j * tile_stride[1] : j * tile_stride[1] + tile_size[1],
+                :, :,
+                start_h:start_h + tile_size[0],
+                start_w:start_w + tile_size[1]
             ]
 
             tile = process_func(
@@ -143,19 +156,21 @@ def spatial_tiled_process(
                 output_type="latent",
                 **kargs,
             ).frames[0]
-
+            
             rows.append(tile)
         cols.append(rows)
 
+    # Calculate latent space dimensions
     latent_stride = (
         tile_stride[0] // spatial_n_compress,
-        tile_stride[1] // spatial_n_compress,
+        tile_stride[1] // spatial_n_compress
     )
     latent_overlap = (
         tile_overlap[0] // spatial_n_compress,
-        tile_overlap[1] // spatial_n_compress,
+        tile_overlap[1] // spatial_n_compress
     )
 
+    # Blend tiles in latent space
     results_cols = []
     for i, rows in enumerate(cols):
         results_rows = []
@@ -167,16 +182,18 @@ def spatial_tiled_process(
             results_rows.append(tile)
         results_cols.append(results_rows)
 
+    # Combine tiles
     pixels = []
     for i, rows in enumerate(results_cols):
         for j, tile in enumerate(rows):
             if i < len(results_cols) - 1:
-                tile = tile[:, :, : latent_stride[0], :]
+                tile = tile[:, :, :latent_stride[0], :]
             if j < len(rows) - 1:
-                tile = tile[:, :, :, : latent_stride[1]]
+                tile = tile[:, :, :, :latent_stride[1]]
             rows[j] = tile
         pixels.append(torch.cat(rows, dim=3))
     x = torch.cat(pixels, dim=2)
+    
     return x
 
 def main(
