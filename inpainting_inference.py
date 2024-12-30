@@ -307,7 +307,7 @@ def main(
             fps=7,
             motion_bucket_id=127,
             noise_aug_strength=0.0,
-            num_inference_steps=8,
+            num_inference_steps=50,
         )
 
         video_latents = video_latents.unsqueeze(0)
