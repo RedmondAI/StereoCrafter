@@ -84,7 +84,7 @@ def spatial_tiled_process(
     mask_frames,
     process_func,
     tile_num,
-    spatial_n_compress=8,
+    spatial_n_compress=4,
     **kargs,
 ):
     height = cond_frames.shape[2]
