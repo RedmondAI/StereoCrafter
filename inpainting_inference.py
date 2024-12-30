@@ -91,7 +91,7 @@ def spatial_tiled_process(
     width = cond_frames.shape[3]
     print(f"\nInput dimensions: height={height}, width={width}")
 
-    # Base overlap in pixel space
+    # Base overlap in pixel space - must be divisible by 8 for VAE
     base_overlap = 128
     print(f"Base overlap: {base_overlap}")
     
@@ -102,7 +102,7 @@ def spatial_tiled_process(
     )
     print(f"Minimum tile size: {min_tile_size}")
     
-    # Round up to nearest multiple of 128
+    # Round up to nearest multiple of 128 (VAE requires multiples of 8)
     tile_size = (
         ((min_tile_size[0] + 127) // 128) * 128,
         ((min_tile_size[1] + 127) // 128) * 128
@@ -176,14 +176,17 @@ def spatial_tiled_process(
             rows.append(tile)
         cols.append(rows)
 
+    # VAE uses 8x compression for both dimensions
+    vae_scale = 8
+    
     # Calculate latent space dimensions
     latent_stride = (
-        tile_stride[0] // spatial_n_compress,
-        tile_stride[1] // spatial_n_compress
+        tile_stride[0] // vae_scale,
+        tile_stride[1] // vae_scale
     )
     latent_overlap = (
-        tile_overlap[0] // spatial_n_compress,
-        tile_overlap[1] // spatial_n_compress
+        tile_overlap[0] // vae_scale,
+        tile_overlap[1] // vae_scale
     )
     print(f"\nLatent space dimensions:")
     print(f"  Stride: {latent_stride}")
