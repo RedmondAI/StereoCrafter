@@ -170,7 +170,9 @@ def main(
     save_dir,
     frames_chunk=23,
     overlap=3,
-    tile_num=1
+    tile_num=1,
+    spatial_n_compress=8,
+    num_inference_steps=50
 ):
     log_time("Starting script")
     log_time(f"Loading models from {pre_trained_path} and {unet_path}")
@@ -300,14 +302,14 @@ def main(
             mask_frames_i,
             pipeline,
             tile_num,
-            spatial_n_compress=8,
+            spatial_n_compress=spatial_n_compress,
             min_guidance_scale=1.01,
             max_guidance_scale=1.01,
             decode_chunk_size=8,
             fps=7,
             motion_bucket_id=127,
             noise_aug_strength=0.0,
-            num_inference_steps=50,
+            num_inference_steps=num_inference_steps,
         )
 
         video_latents = video_latents.unsqueeze(0)
