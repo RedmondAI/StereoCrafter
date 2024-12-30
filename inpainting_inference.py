@@ -85,179 +85,82 @@ def spatial_tiled_process(
     process_func,
     tile_num,
     spatial_n_compress=4,
-    debug=False,
     **kargs,
 ):
     height = cond_frames.shape[2]
     width = cond_frames.shape[3]
-    if debug:
-        print(f"\nInput dimensions: height={height}, width={width}")
 
-    # Base overlap in pixel space - must be divisible by 8 for VAE
-    base_overlap = 128
-    if debug:
-        print(f"Base overlap: {base_overlap}")
-    
-    # Calculate tile size to evenly divide the image
-    # Add overlap to total size first, then divide
-    padded_height = height + base_overlap * (tile_num - 1)
-    padded_width = width + base_overlap * (tile_num - 1)
-    
-    # Calculate base tile size (before rounding)
-    base_tile_height = padded_height // tile_num
-    base_tile_width = padded_width // tile_num
-    
-    # Round up to nearest multiple of 128
+    tile_overlap = (128, 128)
     tile_size = (
-        ((base_tile_height + 127) // 128) * 128,
-        ((base_tile_width + 127) // 128) * 128
+        int((height + tile_overlap[0] *  (tile_num - 1)) / tile_num), 
+        int((width  + tile_overlap[1] * (tile_num - 1)) / tile_num)
     )
-    if debug:
-        print(f"Base tile size: ({base_tile_height}, {base_tile_width})")
-        print(f"Rounded tile size: {tile_size}")
-    
-    # Overlap in pixel space
-    tile_overlap = (base_overlap, base_overlap)
-    if debug:
-        print(f"Tile overlap: {tile_overlap}")
-    
-    # Calculate stride to evenly distribute tiles
     tile_stride = (
-        (height - tile_size[0] + tile_overlap[0]) // (tile_num - 1) if tile_num > 1 else 0,
-        (width - tile_size[1] + tile_overlap[1]) // (tile_num - 1) if tile_num > 1 else 0
+        (tile_size[0] - tile_overlap[0]), 
+        (tile_size[1] - tile_overlap[1])
     )
-    if debug:
-        print(f"Tile stride: {tile_stride}")
     
-    # Calculate total dimensions needed
-    total_height = tile_size[0] + (tile_num - 1) * tile_stride[0] if tile_num > 1 else tile_size[0]
-    total_width = tile_size[1] + (tile_num - 1) * tile_stride[1] if tile_num > 1 else tile_size[1]
-    if debug:
-        print(f"Total dimensions needed: height={total_height}, width={total_width}")
-    
-    # Pad input if needed
-    pad_height = max(0, total_height - height)
-    pad_width = max(0, total_width - width)
-    if pad_height > 0 or pad_width > 0:
-        if debug:
-            print(f"Padding needed: height={pad_height}, width={pad_width}")
-        pad_left = 0
-        pad_right = pad_width
-        pad_top = 0
-        pad_bottom = pad_height
-        cond_frames = torch.nn.functional.pad(cond_frames, (pad_left, pad_right, pad_top, pad_bottom))
-        mask_frames = torch.nn.functional.pad(mask_frames, (pad_left, pad_right, pad_top, pad_bottom))
-    
-    if debug:
-        print(f"Adjusted input dimensions: {cond_frames.shape}")
-    
-    # Process tiles
     cols = []
-    for i in range(tile_num):
+    for i in range(0, tile_num):
         rows = []
-        for j in range(tile_num):
-            # Calculate start position for this tile
-            start_h = i * tile_stride[0] if tile_num > 1 else 0
-            start_w = j * tile_stride[1] if tile_num > 1 else 0
-            
-            # Ensure we don't exceed image boundaries
-            end_h = min(start_h + tile_size[0], height + pad_height)
-            end_w = min(start_w + tile_size[1], width + pad_width)
-            
+        for j in range(0, tile_num):
+
             cond_tile = cond_frames[
-                :, :,
-                start_h:end_h,
-                start_w:end_w
+                :,
+                :,
+                i * tile_stride[0] : i * tile_stride[0] + tile_size[0],
+                j * tile_stride[1] : j * tile_stride[1] + tile_size[1],
             ]
             mask_tile = mask_frames[
-                :, :,
-                start_h:end_h,
-                start_w:end_w
+                :,
+                :,
+                i * tile_stride[0] : i * tile_stride[0] + tile_size[0],
+                j * tile_stride[1] : j * tile_stride[1] + tile_size[1],
             ]
-            
-            if debug:
-                print(f"\nTile ({i},{j}) dimensions:")
-                print(f"  Start position: ({start_h}, {start_w})")
-                print(f"  End position: ({end_h}, {end_w})")
-                print(f"  Tile shape: {cond_tile.shape}")
-
-            # Pad the tile if it's smaller than tile_size
-            if cond_tile.shape[2:] != tile_size:
-                pad_h = tile_size[0] - cond_tile.shape[2]
-                pad_w = tile_size[1] - cond_tile.shape[3]
-                cond_tile = torch.nn.functional.pad(cond_tile, (0, pad_w, 0, pad_h))
-                mask_tile = torch.nn.functional.pad(mask_tile, (0, pad_w, 0, pad_h))
 
             tile = process_func(
                 frames=cond_tile,
                 frames_mask=mask_tile,
-                height=tile_size[0],
-                width=tile_size[1],
+                height=cond_tile.shape[2],
+                width=cond_tile.shape[3],
                 num_frames=len(cond_tile),
                 output_type="latent",
                 **kargs,
             ).frames[0]
-            
-            if debug:
-                print(f"  Latent tile shape: {tile.shape}")
+
             rows.append(tile)
         cols.append(rows)
 
-    # VAE uses 8x compression for both dimensions
-    vae_scale = 8
-    
-    # Calculate latent space dimensions
     latent_stride = (
-        tile_stride[0] // vae_scale,
-        tile_stride[1] // vae_scale
+        tile_stride[0] // spatial_n_compress,
+        tile_stride[1] // spatial_n_compress,
     )
     latent_overlap = (
-        tile_overlap[0] // vae_scale,
-        tile_overlap[1] // vae_scale
+        tile_overlap[0] // spatial_n_compress,
+        tile_overlap[1] // spatial_n_compress,
     )
-    if debug:
-        print(f"\nLatent space dimensions:")
-        print(f"  Stride: {latent_stride}")
-        print(f"  Overlap: {latent_overlap}")
 
-    # Blend tiles in latent space
     results_cols = []
     for i, rows in enumerate(cols):
         results_rows = []
         for j, tile in enumerate(rows):
             if i > 0:
-                if debug:
-                    print(f"\nVertical blend at ({i},{j}):")
-                    print(f"  Previous tile shape: {cols[i-1][j].shape}")
-                    print(f"  Current tile shape: {tile.shape}")
-                    print(f"  Overlap size: {latent_overlap[0]}")
                 tile = blend_v(cols[i - 1][j], tile, latent_overlap[0])
             if j > 0:
-                if debug:
-                    print(f"\nHorizontal blend at ({i},{j}):")
-                    print(f"  Previous tile shape: {rows[j-1].shape}")
-                    print(f"  Current tile shape: {tile.shape}")
-                    print(f"  Overlap size: {latent_overlap[1]}")
                 tile = blend_h(rows[j - 1], tile, latent_overlap[1])
             results_rows.append(tile)
         results_cols.append(results_rows)
 
-    # Combine tiles
     pixels = []
     for i, rows in enumerate(results_cols):
         for j, tile in enumerate(rows):
             if i < len(results_cols) - 1:
-                tile = tile[:, :, :latent_stride[0], :]
+                tile = tile[:, :, : latent_stride[0], :]
             if j < len(rows) - 1:
-                tile = tile[:, :, :, :latent_stride[1]]
-            if debug:
-                print(f"\nFinal tile ({i},{j}) shape: {tile.shape}")
+                tile = tile[:, :, :, : latent_stride[1]]
             rows[j] = tile
         pixels.append(torch.cat(rows, dim=3))
     x = torch.cat(pixels, dim=2)
-    if debug:
-        print(f"\nFinal output shape: {x.shape}")
-    
     return x
 
 def main(
@@ -269,8 +172,7 @@ def main(
     overlap=8,
     tile_num=1,
     spatial_n_compress=8,
-    num_inference_steps=50,
-    debug=False
+    num_inference_steps=50
 ):
     log_time("Starting script")
     log_time(f"Loading models from {pre_trained_path} and {unet_path}")
@@ -361,7 +263,10 @@ def main(
 
     frames = torch.cat([frames_warpped, frames_left, frames_mask], dim=0)
 
-    # Dimensions will be adjusted in spatial_tiled_process
+    height = height // 128 * 128
+    width = width // 128 * 128
+    frames = frames[:, :, 0:height, 0:width]
+
     frames = frames / 255.0
     frames_warpped, frames_left, frames_mask = torch.chunk(frames, chunks=3, dim=0)
     frames_mask = frames_mask.mean(dim=1, keepdim=True)
@@ -399,7 +304,6 @@ def main(
             pipeline,
             tile_num,
             spatial_n_compress=spatial_n_compress,
-            debug=debug,
             min_guidance_scale=1.01,
             max_guidance_scale=1.01,
             decode_chunk_size=8,
