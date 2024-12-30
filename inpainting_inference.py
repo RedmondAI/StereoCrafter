@@ -355,7 +355,7 @@ def main(
     #frames_sbs_path = os.path.join(save_dir, f"{video_name}_sbs.mp4")
     #frames_sbs = torch.cat([frames_left, frames_output], dim=3)
     frames_sbs_path = os.path.join(save_dir, f"{video_name}_inpainted.mp4")
-    frames_sbs = ((frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu())
+    frames_sbs = ((frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu())
     write_video(
         frames_sbs_path,
         frames_sbs,
