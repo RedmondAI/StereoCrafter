@@ -360,22 +360,22 @@ def main(
         options={"crf": "10"},
     )
 
-    vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
-    vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
+    # vid_left = (frames_left * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
+    # vid_right = (frames_output * 255).permute(0, 2, 3, 1).to(dtype=torch.uint8).cpu().numpy()
 
-    vid_left[:, :, :, 1] = 0
-    vid_left[:, :, :, 2] = 0
-    vid_right[:, :, :, 0] = 0
+    # vid_left[:, :, :, 1] = 0
+    # vid_left[:, :, :, 2] = 0
+    # vid_right[:, :, :, 0] = 0
 
-    vid_anaglyph = vid_left + vid_right
-    vid_anaglyph_path = os.path.join(save_dir, f"{video_name}_anaglyph.mp4")
-    write_video(
-        vid_anaglyph_path,
-        vid_anaglyph,
-        fps=fps,
-        video_codec="h264",
-        options={"crf": "10"},
-    )
+    # vid_anaglyph = vid_left + vid_right
+    # vid_anaglyph_path = os.path.join(save_dir, f"{video_name}_anaglyph.mp4")
+    # write_video(
+    #     vid_anaglyph_path,
+    #     vid_anaglyph,
+    #     fps=fps,
+    #     video_codec="h264",
+    #     options={"crf": "10"},
+    # )
 
 if __name__ == "__main__":
     Fire(main)
